@@ -1,7 +1,7 @@
 // server.js
 const express = require('express');
 const jwt = require('jsonwebtoken');
-const pool = require('./db'); // <--- Importamos la conexión desde db.js
+const pool = require('./model/dbConnection/db'); // <--- Importamos la conexión desde db.js
 
 const app = express();
 const port = 3000;
