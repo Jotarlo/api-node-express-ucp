@@ -1,7 +1,8 @@
 // server.js
 const express = require('express');
 const jwt = require('jsonwebtoken');
-const mysql = require('mysql2/promise'); // driver de MySQL con promesas
+const pool = require('./db'); // <--- Importamos la conexión desde db.js
+
 const app = express();
 const port = 3000;
 
@@ -10,20 +11,9 @@ app.use(express.json());
 // 🔑 Clave secreta (en producción debería estar en una variable de entorno)
 const SECRET_KEY = "secreta_ucp_12345";
 
-// 📦 Conexión a la BD MySQL
-const pool = mysql.createPool({
-  host: 'localhost',
-  user: 'root',
-  password: 'Admin12345', 
-  database: 'itemsnodebd', 
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-});
-
 // Middleware para verificar el token
 function authenticateToken(req, res, next) {
-  const authHeader = req.headers['authorization']; // formato: "Bearer <token>"
+  const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
   if (!token) {
@@ -54,7 +44,6 @@ app.post('/login', async (req, res) => {
     }
 
     const user = rows[0];
-
     const token = jwt.sign(
       { id: user.id, username: user.username },
       SECRET_KEY,
@@ -62,7 +51,6 @@ app.post('/login', async (req, res) => {
     );
 
     res.json({ token });
-
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Error en el servidor" });
@@ -70,8 +58,6 @@ app.post('/login', async (req, res) => {
 });
 
 // ---------- CRUD ITEMS (PROTEGIDO) ----------
-
-// Obtener todos los items
 app.get('/items', authenticateToken, async (req, res) => {
   try {
     const [rows] = await pool.query("SELECT * FROM items");
@@ -81,21 +67,17 @@ app.get('/items', authenticateToken, async (req, res) => {
   }
 });
 
-// Obtener un item
 app.get('/items/:id', authenticateToken, async (req, res) => {
   const id = req.params.id;
   try {
     const [rows] = await pool.query("SELECT * FROM items WHERE id = ?", [id]);
-    if (rows.length === 0) {
-      return res.status(404).json({ message: "Item no encontrado" });
-    }
+    if (rows.length === 0) return res.status(404).json({ message: "Item no encontrado" });
     res.json(rows[0]);
   } catch (err) {
     res.status(500).json({ message: "Error al obtener item" });
   }
 });
 
-// Crear item
 app.post('/items', authenticateToken, async (req, res) => {
   const { name, description } = req.body;
   try {
@@ -109,36 +91,26 @@ app.post('/items', authenticateToken, async (req, res) => {
   }
 });
 
-// Actualizar item
 app.put('/items/:id', authenticateToken, async (req, res) => {
   const id = req.params.id;
   const { name, description } = req.body;
-
   try {
     const [result] = await pool.query(
       "UPDATE items SET name = ?, description = ? WHERE id = ?",
       [name, description, id]
     );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "Item no encontrado" });
-    }
-
+    if (result.affectedRows === 0) return res.status(404).json({ message: "Item no encontrado" });
     res.json({ id, name, description });
   } catch (err) {
     res.status(500).json({ message: "Error al actualizar item" });
   }
 });
 
-// Eliminar item
 app.delete('/items/:id', authenticateToken, async (req, res) => {
   const id = req.params.id;
-
   try {
     const [result] = await pool.query("DELETE FROM items WHERE id = ?", [id]);
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "Item no encontrado" });
-    }
+    if (result.affectedRows === 0) return res.status(404).json({ message: "Item no encontrado" });
     res.json({ message: "Item eliminado correctamente" });
   } catch (err) {
     res.status(500).json({ message: "Error al eliminar item" });
