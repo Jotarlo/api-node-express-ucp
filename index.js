@@ -1,6 +1,7 @@
 // server.js
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const mysql = require('mysql2/promise'); // driver de MySQL con promesas
 const app = express();
 const port = 3000;
 
@@ -9,11 +10,16 @@ app.use(express.json());
 // 🔑 Clave secreta (en producción debería estar en una variable de entorno)
 const SECRET_KEY = "secreta_ucp_12345";
 
-// Simulación de usuarios registrados
-const users = [
-  { id: 1, username: "admin", password: "1234" },
-  { id: 2, username: "user", password: "abcd" }
-];
+// 📦 Conexión a la BD MySQL
+const pool = mysql.createPool({
+  host: 'localhost',
+  user: 'root',
+  password: 'Admin12345', 
+  database: 'itemsnodebd', 
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
 
 // Middleware para verificar el token
 function authenticateToken(req, res, next) {
@@ -33,84 +39,113 @@ function authenticateToken(req, res, next) {
   });
 }
 
-// Login → devuelve un token
-app.post('/login', (req, res) => {
+// ---------- LOGIN ----------
+app.post('/login', async (req, res) => {
   const { username, password } = req.body;
-  const user = users.find(u => u.username === username && u.password === password);
 
-  if (!user) {
-    return res.status(401).json({ message: "Credenciales inválidas" });
+  try {
+    const [rows] = await pool.query(
+      "SELECT id, username, password FROM users WHERE username = ? AND password = ?",
+      [username, password]
+    );
+
+    if (rows.length === 0) {
+      return res.status(401).json({ message: "Credenciales inválidas" });
+    }
+
+    const user = rows[0];
+
+    const token = jwt.sign(
+      { id: user.id, username: user.username },
+      SECRET_KEY,
+      { expiresIn: '1h' }
+    );
+
+    res.json({ token });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Error en el servidor" });
   }
-
-  const token = jwt.sign(
-    { id: user.id, username: user.username },
-    SECRET_KEY,
-    { expiresIn: '1h' } // El token expira en 1 hora
-  );
-  console.log(token);
-  res.json({ token });
 });
 
-// ------- CRUD protegido -------
+// ---------- CRUD ITEMS (PROTEGIDO) ----------
 
-// Base de datos en memoria
-let items = [
-  { id: 1, name: "Item 1", description: "Primer item" },
-  { id: 2, name: "Item 2", description: "Segundo item" }
-];
-
-// Obtener todos los items (requiere token)
-app.get('/items', authenticateToken, (req, res) => {
-  res.json(items);
+// Obtener todos los items
+app.get('/items', authenticateToken, async (req, res) => {
+  try {
+    const [rows] = await pool.query("SELECT * FROM items");
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ message: "Error al obtener items" });
+  }
 });
 
 // Obtener un item
-app.get('/items/:id', authenticateToken, (req, res) => {
-  const id = parseInt(req.params.id);
-  const item = items.find(i => i.id === id);
-  item ? res.json(item) : res.status(404).json({ message: "Item no encontrado" });
+app.get('/items/:id', authenticateToken, async (req, res) => {
+  const id = req.params.id;
+  try {
+    const [rows] = await pool.query("SELECT * FROM items WHERE id = ?", [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "Item no encontrado" });
+    }
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ message: "Error al obtener item" });
+  }
 });
 
 // Crear item
-app.post('/items', authenticateToken, (req, res) => {
+app.post('/items', authenticateToken, async (req, res) => {
   const { name, description } = req.body;
-  const newItem = {
-    id: items.length > 0 ? items[items.length - 1].id + 1 : 1,
-    name,
-    description
-  };
-  items.push(newItem);
-  res.status(201).json(newItem);
+  try {
+    const [result] = await pool.query(
+      "INSERT INTO items (name, description) VALUES (?, ?)",
+      [name, description]
+    );
+    res.status(201).json({ id: result.insertId, name, description });
+  } catch (err) {
+    res.status(500).json({ message: "Error al crear item" });
+  }
 });
 
 // Actualizar item
-app.put('/items/:id', authenticateToken, (req, res) => {
-  const id = parseInt(req.params.id);
+app.put('/items/:id', authenticateToken, async (req, res) => {
+  const id = req.params.id;
   const { name, description } = req.body;
-  const index = items.findIndex(i => i.id === id);
 
-  if (index !== -1) {
-    items[index] = { id, name, description };
-    res.json(items[index]);
-  } else {
-    res.status(404).json({ message: "Item no encontrado" });
+  try {
+    const [result] = await pool.query(
+      "UPDATE items SET name = ?, description = ? WHERE id = ?",
+      [name, description, id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Item no encontrado" });
+    }
+
+    res.json({ id, name, description });
+  } catch (err) {
+    res.status(500).json({ message: "Error al actualizar item" });
   }
 });
 
 // Eliminar item
-app.delete('/items/:id', authenticateToken, (req, res) => {
-  const id = parseInt(req.params.id);
-  const index = items.findIndex(i => i.id === id);
+app.delete('/items/:id', authenticateToken, async (req, res) => {
+  const id = req.params.id;
 
-  if (index !== -1) {
-    const deletedItem = items.splice(index, 1);
-    res.json(deletedItem[0]);
-  } else {
-    res.status(404).json({ message: "Item no encontrado" });
+  try {
+    const [result] = await pool.query("DELETE FROM items WHERE id = ?", [id]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Item no encontrado" });
+    }
+    res.json({ message: "Item eliminado correctamente" });
+  } catch (err) {
+    res.status(500).json({ message: "Error al eliminar item" });
   }
 });
 
-// Levantar servidor
+// ---------- LEVANTAR SERVIDOR ----------
 app.listen(port, () => {
   console.log(`Servidor seguro en http://localhost:${port}`);
 });
